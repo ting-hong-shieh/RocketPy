@@ -2,6 +2,7 @@ import math
 
 import numpy as np
 import pytest
+from matplotlib.patches import Ellipse
 
 from rocketpy import Environment
 from rocketpy.tools import (
@@ -12,6 +13,7 @@ from rocketpy.tools import (
     euler313_to_quaternions,
     find_roots_cubic_function,
     generate_monte_carlo_ellipses,
+    generate_monte_carlo_ellipses_coordinates,
     haversine,
     inverted_haversine,
     mercator_to_wgs84,
@@ -106,6 +108,89 @@ def test_generate_monte_carlo_ellipses_builds_scaled_patches():
     assert apogee_ellipses[1].height == pytest.approx(2 * apogee_ellipses[0].height)
     assert apogee_ellipses[0].get_facecolor() == pytest.approx((0.2, 0.6, 0.4, 0.35))
     assert impact_ellipses[0].get_facecolor() == pytest.approx((0.8, 0.1, 0.3, 0.35))
+
+
+def test_ellipse_coordinates_walk_the_ellipse_counterclockwise_from_east():
+    """A circle drawn around the launch site comes back as points at the circle
+    radius, starting due east and turning towards north."""
+    lat0, lon0 = -21.960641, -47.482122
+    radius = 1000.0
+    circle = Ellipse(xy=(0, 0), width=2 * radius, height=2 * radius, angle=0)
+
+    east, north, west, south = generate_monte_carlo_ellipses_coordinates(
+        [circle], lat0, lon0, resolution=4
+    )[0]
+
+    for latitude, longitude in (east, north, west, south):
+        assert haversine(lat0, lon0, latitude, longitude) == pytest.approx(radius)
+
+    assert west[1] < lon0 < east[1]
+    assert south[0] < lat0 < north[0]
+    # The east and west points sit on the great circle through the launch site,
+    # which bends away from the parallel by well under a micro-degree at 1 km.
+    assert east[0] == pytest.approx(lat0, abs=1e-6)
+    assert west[0] == pytest.approx(lat0, abs=1e-6)
+    assert north[1] == pytest.approx(lon0)
+    assert south[1] == pytest.approx(lon0)
+
+
+def test_ellipse_coordinates_read_the_center_as_a_local_east_north_offset():
+    """The ellipse center is an offset in meters from the launch site, east
+    along x and north along y."""
+    lat0, lon0 = 32.990254, -106.974998
+    east_offset, north_offset = 300.0, 400.0
+    point_ellipse = Ellipse(xy=(east_offset, north_offset), width=0, height=0, angle=0)
+
+    coordinates = generate_monte_carlo_ellipses_coordinates(
+        [point_ellipse], lat0, lon0, resolution=3
+    )[0]
+
+    expected = inverted_haversine(
+        lat0,
+        lon0,
+        math.hypot(east_offset, north_offset),
+        math.degrees(math.atan2(east_offset, north_offset)),
+    )
+    assert len(coordinates) == 3
+    for latitude, longitude in coordinates:
+        assert (latitude, longitude) == pytest.approx(expected)
+
+
+def test_ellipse_coordinates_follow_the_ellipse_rotation():
+    """``angle`` turns the width axis counterclockwise away from east, so a
+    quarter turn leaves the major axis pointing north."""
+    lat0, lon0 = 32.990254, -106.974998
+    semi_major, semi_minor = 2000.0, 500.0
+    rotated = Ellipse(xy=(0, 0), width=2 * semi_major, height=2 * semi_minor, angle=90)
+
+    north, west, south, east = generate_monte_carlo_ellipses_coordinates(
+        [rotated], lat0, lon0, resolution=4
+    )[0]
+
+    assert haversine(lat0, lon0, *north) == pytest.approx(semi_major)
+    assert haversine(lat0, lon0, *south) == pytest.approx(semi_major)
+    assert haversine(lat0, lon0, *east) == pytest.approx(semi_minor)
+    assert haversine(lat0, lon0, *west) == pytest.approx(semi_minor)
+    assert south[0] < lat0 < north[0]
+    assert west[1] < lon0 < east[1]
+
+
+def test_ellipse_coordinates_return_one_point_list_per_ellipse():
+    """Every ellipse gets its own list of ``resolution`` points."""
+    lat0, lon0 = 32.990254, -106.974998
+    ellipses = [
+        Ellipse(xy=(0, 0), width=100, height=50, angle=0),
+        Ellipse(xy=(10, -10), width=200, height=100, angle=30),
+    ]
+
+    default = generate_monte_carlo_ellipses_coordinates(ellipses, lat0, lon0)
+    coarse = generate_monte_carlo_ellipses_coordinates(
+        ellipses, lat0, lon0, resolution=7
+    )
+
+    assert [len(points) for points in default] == [100, 100]
+    assert [len(points) for points in coarse] == [7, 7]
+    assert generate_monte_carlo_ellipses_coordinates([], lat0, lon0) == []
 
 
 def test_calculate_cubic_hermite_coefficients():
