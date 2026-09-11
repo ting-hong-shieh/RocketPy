@@ -169,13 +169,21 @@ def test_a_worker_that_ignores_terminate_is_killed():
     assert stubborn.killed
 
 
-def test_the_fleet_comes_down_on_one_deadline_not_one_each():
+def test_the_fleet_comes_down_on_one_deadline_not_one_each(monkeypatch):
     """A stage gives the fleet one grace period between them, not each."""
     # Observed through what each worker is offered: with a deadline of its own
     # every worker is given the whole grace, so a fleet of thirty takes thirty
     # times as long to give up on.
     died = _Worker(exitcode=-9, alive_for=1)
     stuck = [_Worker(never=True) for _ in range(4)]
+    now = 0.0
+
+    def tick():
+        nonlocal now
+        now += 0.01
+        return now
+
+    monkeypatch.setattr("rocketpy.simulation.monte_carlo.monotonic", tick)
 
     _join_the_workers([died, *stuck], _Event(), grace_period=0.05)
 
